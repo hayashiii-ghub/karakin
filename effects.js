@@ -174,6 +174,182 @@ function bloodFX(pos, dir) {
   spawnBurst(pos, { color: 0x7e1210, count: 9, dir, speed: 1.8, spread: 1.4, up: 1.2, grav: 11, sizeMin: 0.03, sizeMax: 0.085, lifeMin: 0.2, lifeMax: 0.5 });
 }
 
+/* ---------- グレネード（構え → 軌道プレビュー → クリック投擲） ---------- */
+const grenades = [];
+const nadeArcDots = [];
+let nadeMat = null;
+const _nadeDir = new THREE.Vector3();
+const _nadeFrom = new THREE.Vector3();
+const NADE_ARC_N = 28;
+const NADE_SPEED = 32;
+const NADE_GRAV = 16;
+
+function clearGrenades() {
+  for (const g of grenades) scene.remove(g.m);
+  grenades.length = 0;
+  hideNadeArc();
+}
+
+function ensureNadeMats() {
+  if (!nadeMat) {
+    nadeMat = new THREE.MeshLambertMaterial({ color: 0x3a4a2a });
+    nadeMat.color.convertSRGBToLinear();
+  }
+  if (nadeArcDots.length === 0) {
+    for (let i = 0; i < NADE_ARC_N; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xd8c08a, transparent: true, opacity: 0.75, depthWrite: false, fog: false,
+      });
+      const d = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), mat);
+      d.visible = false;
+      scene.add(d);
+      nadeArcDots.push(d);
+    }
+  }
+}
+
+function getNadeLaunch() {
+  camera.getWorldDirection(_nadeDir);
+  _nadeFrom.copy(camera.getWorldPosition(new THREE.Vector3()));
+  _nadeFrom.addScaledVector(_nadeDir, 0.55);
+  _nadeFrom.y -= 0.05;
+  const vel = _nadeDir.clone().multiplyScalar(NADE_SPEED);
+  vel.y += lerp(1.2, 6.5, clamp((_nadeDir.y + 0.2) / 0.9, 0, 1));
+  return { from: _nadeFrom.clone(), vel };
+}
+
+function showNadeArc() {
+  ensureNadeMats();
+  for (const d of nadeArcDots) d.visible = false;
+}
+
+function hideNadeArc() {
+  for (const d of nadeArcDots) d.visible = false;
+}
+
+function updateNadeArc() {
+  ensureNadeMats();
+  const { from, vel } = getNadeLaunch();
+  let px = from.x, py = from.y, pz = from.z;
+  let vx = vel.x, vy = vel.y, vz = vel.z;
+  const step = 0.055;
+  let shown = 0;
+  for (let i = 0; i < NADE_ARC_N; i++) {
+    for (let k = 0; k < 2; k++) {
+      vy -= NADE_GRAV * step;
+      px += vx * step;
+      py += vy * step;
+      pz += vz * step;
+      if (py < 0.09) {
+        py = 0.09;
+        const d = nadeArcDots[shown++];
+        d.visible = true;
+        d.position.set(px, py + 0.05, pz);
+        d.scale.setScalar(1.4);
+        d.material.opacity = 0.95;
+        for (let j = shown; j < NADE_ARC_N; j++) nadeArcDots[j].visible = false;
+        return;
+      }
+    }
+    const d = nadeArcDots[shown++];
+    d.visible = true;
+    d.position.set(px, py, pz);
+    const u = i / NADE_ARC_N;
+    d.scale.setScalar(0.7 + u * 0.6);
+    d.material.opacity = 0.35 + u * 0.5;
+  }
+}
+
+function throwGrenade() {
+  if (!player.alive || game.state !== 'playing') return;
+  if (!player.nadeAim) return;
+  if (player.grenades <= 0 || player.grenadeCd > 0) {
+    if (player.grenades <= 0) AudioSys.dry();
+    cancelNadeAim();
+    return;
+  }
+  player.grenades--;
+  player.grenadeCd = 0.55;
+  updateGrenadeHUD();
+  ensureNadeMats();
+
+  const { from, vel } = getNadeLaunch();
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), nadeMat);
+  m.castShadow = true;
+  m.position.copy(from);
+  scene.add(m);
+  grenades.push({ m, vel: vel.clone(), fuse: 2.2, bounced: false });
+  AudioSys.nadeThrow();
+  cancelNadeAim();
+}
+
+function explodeGrenade(pos) {
+  spawnBurst(pos, { color: 0xffaa55, count: 22, speed: 4, spread: 3.5, up: 3.5, grav: 8, sizeMin: 0.04, sizeMax: 0.12, lifeMin: 0.25, lifeMax: 0.7 });
+  spawnBurst(pos, { color: 0x555045, count: 14, speed: 2.2, spread: 2.8, up: 2.2, grav: 5, sizeMin: 0.06, sizeMax: 0.16, lifeMin: 0.4, lifeMax: 0.9 });
+  spawnBurst(pos, { color: 0xffe0a0, count: 8, speed: 6, spread: 1.5, up: 4, grav: 12, sizeMin: 0.02, sizeMax: 0.05, lifeMin: 0.1, lifeMax: 0.25 });
+  AudioSys.grenade();
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    // 味方 AI への誤爆は軽減（プレイヤー投げ想定）
+    const ep = new THREE.Vector3(e.pos.x, e.pos.y + 1.0, e.pos.z);
+    const d = ep.distanceTo(pos);
+    if (d > 14) continue;
+    const t = clamp(d / 14, 0, 1);
+    let dmg = lerp(110, 28, t * t);
+    if (e.team === 'blue') dmg *= 0.35;
+    const dir = ep.clone().sub(pos).normalize();
+    e.hit(dmg, d < 4.4 ? 'torso' : 'limb', ep, dir, player);
+    if (d < 7) bloodFX(ep, dir);
+  }
+
+  if (player.alive) {
+    const pp = new THREE.Vector3(player.pos.x, player.pos.y + player.eyeH * 0.6, player.pos.z);
+    const d = pp.distanceTo(pos);
+    if (d < 9.6) {
+      const t = clamp(d / 9.6, 0, 1);
+      damagePlayer(lerp(38, 6, t * t), pos);
+    }
+  }
+}
+
+function updateGrenades(dt) {
+  for (let i = grenades.length - 1; i >= 0; i--) {
+    const g = grenades[i];
+    g.fuse -= dt;
+    g.vel.y -= NADE_GRAV * dt;
+    g.m.position.x += g.vel.x * dt;
+    g.m.position.y += g.vel.y * dt;
+    g.m.position.z += g.vel.z * dt;
+    g.m.rotation.x += dt * 8;
+    g.m.rotation.z += dt * 6;
+
+    if (g.m.position.y < 0.09) {
+      g.m.position.y = 0.09;
+      if (g.vel.y < 0) {
+        g.vel.y *= -0.32;
+        g.vel.x *= 0.7;
+        g.vel.z *= 0.7;
+        if (Math.abs(g.vel.y) < 1.0) {
+          g.vel.y = 0;
+          g.vel.x *= 0.85;
+          g.vel.z *= 0.85;
+        }
+        g.bounced = true;
+      }
+    }
+    g.m.position.x = clamp(g.m.position.x, -59, 59);
+    g.m.position.z = clamp(g.m.position.z, -59, 59);
+
+    if (g.fuse <= 0) {
+      const p = g.m.position.clone();
+      scene.remove(g.m);
+      grenades.splice(i, 1);
+      explodeGrenade(p);
+    }
+  }
+}
+
 /* ---------- 漂う砂塵 ---------- */
 let dust = null;
 function initDust() {

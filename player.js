@@ -15,29 +15,323 @@ const player = {
   radius: 0.36,
   recoilP: 0, recoilY: 0,          // リコイルによる視点オフセット
   lean: 0,
+  grenades: 1,
+  grenadeMax: 4,
+  grenadeCd: 0,
+  nadeAim: false,
+  medkits: 0,
+  medkitMax: 3,
+  healing: false,
+  healT: 0,
+  healDur: 2,
+  healFrom: 100,
+  healTo: 100,
+};
+
+/** @type {'assault'|'pistol'|'sniper'} */
+const WEAPON_ORDER = ['assault', 'pistol', 'sniper'];
+
+const WEAPON_DEFS = {
+  assault: {
+    id: 'assault', label: 'アサルト', mode: 'AUTO',
+    magSize: 30, startReserve: 120, maxReserve: 360,
+    fireInterval: 60 / 750, reloadDur: 2.1, auto: true,
+    spreadHip: 0.017, spreadAds: 0.0045,
+    bloomAdd: 0.0038, bloomMax: 0.03, bloomDecay: 0.028,
+    recoilP: [0.0055, 0.0085], recoilY: 0.0035,
+    kickZ: 0.045, kickR: 0.075, adsRecoil: 0.55,
+    adsFov: 46, adsSens: 0.62, scale: 0.92,
+    hip: { x: 0.21, y: -0.19, z: -0.4, rx: 0, ry: 0.08 },
+    ads: { x: 0, y: -0.09, z: -0.47, rx: 0, ry: 0 },
+    dmg: { head: 110, torso: 34, limb: 24 },
+  },
+  pistol: {
+    id: 'pistol', label: 'ハンドガン', mode: 'SEMI',
+    magSize: 12, startReserve: 60, maxReserve: 120,
+    fireInterval: 60 / 320, reloadDur: 1.35, auto: false,
+    spreadHip: 0.022, spreadAds: 0.01,
+    bloomAdd: 0.002, bloomMax: 0.018, bloomDecay: 0.04,
+    recoilP: [0.004, 0.006], recoilY: 0.0025,
+    kickZ: 0.03, kickR: 0.05, adsRecoil: 0.7,
+    adsFov: 62, adsSens: 0.75, scale: 0.88,
+    hip: { x: 0.2, y: -0.22, z: -0.36, rx: 0, ry: 0.06 },
+    ads: { x: 0.02, y: -0.14, z: -0.4, rx: 0, ry: 0 },
+    dmg: { head: 90, torso: 28, limb: 18 },
+  },
+  sniper: {
+    id: 'sniper', label: 'スナイパー', mode: 'BOLT',
+    magSize: 5, startReserve: 15, maxReserve: 40,
+    fireInterval: 1.2, reloadDur: 2.7, auto: false,
+    spreadHip: 0.09, spreadAds: 0.0007,
+    bloomAdd: 0.01, bloomMax: 0.02, bloomDecay: 0.05,
+    recoilP: [0.02, 0.028], recoilY: 0.006,
+    kickZ: 0.09, kickR: 0.12, adsRecoil: 0.45,
+    adsFov: 22, adsSens: 0.38, scale: 1,
+    hip: { x: 0.22, y: -0.2, z: -0.42, rx: 0.02, ry: 0.1 },
+    ads: { x: 0, y: -0.1, z: -0.52, rx: 0, ry: 0 },
+    // 胴・頭は一撃、四肢は非致死
+    dmg: { head: 200, torso: 105, limb: 55 },
+  },
+};
+
+const arsenal = {
+  owned: { assault: true, pistol: true, sniper: false },
+  slots: {
+    assault: { mag: 30, reserve: 120 },
+    pistol: { mag: 12, reserve: 60 },
+    sniper: { mag: 5, reserve: 15 },
+  },
+  activeId: 'assault',
+  models: {},   // id -> { group, muzzle, flash }
 };
 
 const weapon = {
   mag: 30, magSize: 30, reserve: 120,
   reloading: false, reloadT: 0, reloadDur: 2.1,
-  lastShot: 0, fireInterval: 60 / 750,   // 750rpm
-  bloom: 0,                             // 連射による拡散
+  lastShot: 0, fireInterval: 60 / 750,
+  bloom: 0,
   ads: false, adsT: 0,
   gun: null, muzzle: null, flash: null, flashLight: null,
   kickZ: 0, kickR: 0,
   swayX: 0, swayY: 0,
   gunPos: new THREE.Vector3(0.22, -0.2, -0.38),
+  semiLocked: false,
+  switchLock: 0,
 };
 
 const input = { keys: {}, lmb: false, rmb: false };
 
+function activeDef() { return WEAPON_DEFS[arsenal.activeId]; }
+
+function ownedIds() {
+  return WEAPON_ORDER.filter(id => arsenal.owned[id]);
+}
+
+function saveActiveAmmo() {
+  const s = arsenal.slots[arsenal.activeId];
+  if (!s) return;
+  s.mag = weapon.mag;
+  s.reserve = weapon.reserve;
+}
+
+function applyWeaponStats(id) {
+  const def = WEAPON_DEFS[id];
+  const slot = arsenal.slots[id];
+  arsenal.activeId = id;
+  weapon.mag = slot.mag;
+  weapon.magSize = def.magSize;
+  weapon.reserve = slot.reserve;
+  weapon.fireInterval = def.fireInterval;
+  weapon.reloadDur = def.reloadDur;
+  weapon.bloom = 0;
+  weapon.semiLocked = false;
+  weapon.reloading = false;
+  weapon.reloadT = 0;
+  weapon.ads = false;
+  document.getElementById('reloadwrap').style.display = 'none';
+
+  for (const wid of WEAPON_ORDER) {
+    const m = arsenal.models[wid];
+    if (m) m.group.visible = wid === id;
+  }
+  const model = arsenal.models[id];
+  if (model) {
+    weapon.gun = model.group;
+    weapon.muzzle = model.muzzle;
+    weapon.flash = model.flash;
+    model.group.scale.setScalar(def.scale);
+  }
+  updateAmmoHUD();
+}
+
+function cycleWeapon(dir) {
+  if (!player.alive || game.state !== 'playing') return;
+  if (weapon.switchLock > 0) return;
+  const ids = ownedIds();
+  if (ids.length < 2) return;
+  saveActiveAmmo();
+  const i = ids.indexOf(arsenal.activeId);
+  const next = ids[(i + dir + ids.length) % ids.length];
+  if (next === arsenal.activeId) return;
+  applyWeaponStats(next);
+  // ハンドガンへの切替は速め（近接応戦用）
+  weapon.switchLock = next === 'pistol' ? 0.14 : 0.28;
+  spawnFloater(WEAPON_DEFS[next].label, false);
+}
+
+function resetArsenal() {
+  const tdm = game.mode === 'tdm';
+  arsenal.owned = { assault: true, pistol: true, sniper: !!tdm };
+  arsenal.slots = {
+    assault: { mag: 30, reserve: tdm ? 90 : 120 },
+    pistol: { mag: 12, reserve: tdm ? 36 : 60 },
+    sniper: { mag: 5, reserve: tdm ? 10 : 15 },
+  };
+  arsenal.activeId = 'assault';
+  weapon.kickZ = weapon.kickR = 0;
+  weapon.swayX = weapon.swayY = 0;
+  weapon.adsT = 0;
+  player.grenades = tdm ? 2 : 1;
+  player.grenadeMax = tdm ? 4 : 4;
+  player.grenadeCd = 0;
+  player.nadeAim = false;
+  player.medkits = tdm ? 2 : 0;
+  player.medkitMax = tdm ? 3 : 3;
+  player.healing = false;
+  player.healT = 0;
+  clearGrenades();
+  hideNadeArc();
+  hideHealBar();
+  applyWeaponStats('assault');
+  updateGrenadeHUD();
+  updateMedkitHUD();
+}
+
+function addGrenades(n) {
+  const before = player.grenades;
+  player.grenades = Math.min(player.grenadeMax, player.grenades + n);
+  updateGrenadeHUD();
+  return player.grenades > before;
+}
+
+function addMedkits(n) {
+  const before = player.medkits;
+  player.medkits = Math.min(player.medkitMax, player.medkits + n);
+  updateMedkitHUD();
+  return player.medkits > before;
+}
+
+function toggleNadeAim() {
+  if (!player.alive || game.state !== 'playing') return;
+  if (player.nadeAim) {
+    cancelNadeAim();
+    return;
+  }
+  if (player.grenades <= 0) { AudioSys.dry(); return; }
+  if (player.grenadeCd > 0 || player.healing) return;
+  player.nadeAim = true;
+  weapon.ads = false;
+  input.rmb = false;
+  showNadeArc();
+  updateGrenadeHUD();
+}
+
+function cancelNadeAim() {
+  player.nadeAim = false;
+  hideNadeArc();
+  updateGrenadeHUD();
+}
+
+function startHeal() {
+  if (!player.alive || game.state !== 'playing') return;
+  if (player.healing) return;
+  if (player.medkits <= 0) { AudioSys.dry(); return; }
+  if (player.hp >= 100) return;
+  if (player.nadeAim) cancelNadeAim();
+  player.medkits--;
+  player.healing = true;
+  player.healT = 0;
+  player.healFrom = player.hp;
+  player.healTo = Math.min(100, player.hp + 50);
+  player.sprinting = false;
+  weapon.ads = false;
+  updateMedkitHUD();
+  showHealBar();
+  AudioSys.pickup();
+}
+
+function cancelHeal() {
+  if (!player.healing) return;
+  player.healing = false;
+  hideHealBar();
+}
+
+function updateHeal(dt) {
+  if (!player.healing) return;
+  player.healT += dt;
+  const u = clamp(player.healT / player.healDur, 0, 1);
+  player.hp = lerp(player.healFrom, player.healTo, u);
+  updateHealthHUD();
+  const fill = document.getElementById('healfill');
+  if (fill) fill.style.width = `${u * 100}%`;
+  if (u >= 1) {
+    player.healing = false;
+    hideHealBar();
+    spawnFloater('応急処置 完了', false);
+  }
+}
+
+function showHealBar() {
+  const w = document.getElementById('healwrap');
+  if (!w) return;
+  w.style.display = 'block';
+  document.getElementById('healfill').style.width = '0%';
+}
+function hideHealBar() {
+  const w = document.getElementById('healwrap');
+  if (w) w.style.display = 'none';
+}
+
+function grantSniper() {
+  if (arsenal.owned.sniper) {
+    saveActiveAmmo();
+    const slot = arsenal.slots.sniper;
+    const def = WEAPON_DEFS.sniper;
+    const before = slot.reserve;
+    slot.reserve = Math.min(slot.reserve + 10, def.maxReserve);
+    if (arsenal.activeId === 'sniper') weapon.reserve = slot.reserve;
+    spawnFloater(slot.reserve > before ? '狙撃弾 +10' : '狙撃弾 MAX', false);
+    updateAmmoHUD();
+    return false;
+  }
+  arsenal.owned.sniper = true;
+  arsenal.slots.sniper = { mag: 5, reserve: 15 };
+  saveActiveAmmo();
+  applyWeaponStats('sniper');
+  spawnFloater('スナイパーライフル 取得', true);
+  return true;
+}
+
+function addReserveAmmo(amount) {
+  saveActiveAmmo();
+  const id = arsenal.activeId;
+  const def = WEAPON_DEFS[id];
+  const slot = arsenal.slots[id];
+  const room = def.maxReserve - slot.reserve;
+  let left = amount;
+  if (room > 0) {
+    const take = Math.min(room, left);
+    slot.reserve += take;
+    left -= take;
+  }
+  if (left > 0 && id !== 'assault') {
+    const a = arsenal.slots.assault;
+    const ad = WEAPON_DEFS.assault;
+    a.reserve = Math.min(a.reserve + left, ad.maxReserve);
+  }
+  if (arsenal.activeId === id) weapon.reserve = arsenal.slots[id].reserve;
+  updateAmmoHUD();
+}
+
 /* ---------- 銃ビューモデル ---------- */
-function buildGun() {
+function attachMuzzleFlash(g, muzzleLocal) {
+  const muzzle = new THREE.Object3D();
+  muzzle.position.copy(muzzleLocal);
+  g.add(muzzle);
+  const flash = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getFlashTexture(), color: 0xffc36b, transparent: true, opacity: 0, fog: false,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  flash.scale.setScalar(0.22);
+  muzzle.add(flash);
+  return { muzzle, flash };
+}
+
+function buildAssaultModel() {
   const g = new THREE.Group();
   const gm = MAT.gunmetal, dm = MAT.darkMetal;
 
-  const recv = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.095, 0.46), gm);
-  g.add(recv);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.095, 0.46), gm));
   const hand = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.07, 0.24), dm);
   hand.position.set(0, -0.012, -0.33);
   g.add(hand);
@@ -60,7 +354,6 @@ function buildGun() {
   magM.position.set(0, -0.115, -0.06);
   magM.rotation.x = 0.14;
   g.add(magM);
-  // レッドドットサイト（リング＋ドット）
   const sightBase = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.02, 0.09), dm);
   sightBase.position.set(0, 0.062, -0.05);
   g.add(sightBase);
@@ -74,11 +367,9 @@ function buildGun() {
     new THREE.MeshBasicMaterial({ color: 0xff2211, fog: false }));
   dot.position.set(0, 0.098, -0.05);
   g.add(dot);
-  // フロントサイト
   const fs = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.05, 0.01), dm);
   fs.position.set(0, 0.045, -0.44);
   g.add(fs);
-  // グローブ（手）
   const gloveM = new THREE.MeshLambertMaterial({ color: 0x3d3a30 });
   gloveM.color.convertSRGBToLinear();
   const handR = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.05, 0.09), gloveM);
@@ -88,29 +379,90 @@ function buildGun() {
   handL.position.set(-0.005, -0.03, -0.32);
   g.add(handL);
 
-  // マズル位置
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0.012, -0.72);
-  g.add(muzzle);
+  const { muzzle, flash } = attachMuzzleFlash(g, new THREE.Vector3(0, 0.012, -0.72));
+  return { group: g, muzzle, flash };
+}
 
-  // マズルフラッシュ
-  const flash = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: getFlashTexture(), color: 0xffc36b, transparent: true, opacity: 0, fog: false,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  }));
-  flash.scale.setScalar(0.22);
-  muzzle.add(flash);
+function buildPistolModel() {
+  const g = new THREE.Group();
+  const gm = MAT.gunmetal, dm = MAT.darkMetal;
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.055, 0.22), gm);
+  g.add(slide);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.16), dm);
+  frame.position.set(0, -0.035, 0.02);
+  g.add(frame);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.11, 0.055), dm);
+  grip.position.set(0, -0.09, 0.06);
+  grip.rotation.x = 0.25;
+  g.add(grip);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.1, 6), gm);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0, 0.005, -0.15);
+  g.add(barrel);
+  const gloveM = new THREE.MeshLambertMaterial({ color: 0x3d3a30 });
+  gloveM.color.convertSRGBToLinear();
+  const handR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 0.07), gloveM);
+  handR.position.set(0.01, -0.08, 0.05);
+  g.add(handR);
+  const { muzzle, flash } = attachMuzzleFlash(g, new THREE.Vector3(0, 0.005, -0.22));
+  flash.scale.setScalar(0.14);
+  return { group: g, muzzle, flash };
+}
 
+function buildSniperModel() {
+  const g = new THREE.Group();
+  const gm = MAT.gunmetal, dm = MAT.darkMetal;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.08, 0.7), gm);
+  g.add(body);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.55, 8), dm);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0, 0.01, -0.6);
+  g.add(barrel);
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.09, 0.28), dm);
+  stock.position.set(0, -0.01, 0.42);
+  g.add(stock);
+  const magM = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.06), gm);
+  magM.position.set(0, -0.09, -0.05);
+  g.add(magM);
+  // スコープ（腰だめ時のみ表示。ADS時は2Dオーバーレイに切替）
+  const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.22, 10), dm);
+  scope.rotation.x = Math.PI / 2;
+  scope.position.set(0, 0.08, -0.05);
+  scope.userData.hideOnAds = true;
+  g.add(scope);
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.022, 12),
+    new THREE.MeshBasicMaterial({ color: 0x6a8a9a, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
+  lens.position.set(0, 0.08, 0.06);
+  lens.userData.hideOnAds = true;
+  g.add(lens);
+  const gloveM = new THREE.MeshLambertMaterial({ color: 0x3d3a30 });
+  gloveM.color.convertSRGBToLinear();
+  const handR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 0.08), gloveM);
+  handR.position.set(0.01, -0.08, 0.12);
+  g.add(handR);
+  const handL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.09), gloveM);
+  handL.position.set(-0.01, -0.02, -0.35);
+  g.add(handL);
+  const { muzzle, flash } = attachMuzzleFlash(g, new THREE.Vector3(0, 0.01, -0.9));
+  flash.scale.setScalar(0.28);
+  return { group: g, muzzle, flash };
+}
+
+function buildGun() {
   const flashLight = new THREE.PointLight(0xffb36b, 0, 14);
   scene.add(flashLight);
-
-  weapon.gun = g;
-  weapon.muzzle = muzzle;
-  weapon.flash = flash;
   weapon.flashLight = flashLight;
-  camera.add(g);
-  g.scale.setScalar(0.92);
-  g.position.copy(weapon.gunPos);
+
+  arsenal.models.assault = buildAssaultModel();
+  arsenal.models.pistol = buildPistolModel();
+  arsenal.models.sniper = buildSniperModel();
+  for (const id of WEAPON_ORDER) {
+    const m = arsenal.models[id];
+    camera.add(m.group);
+    m.group.visible = false;
+    m.group.position.copy(weapon.gunPos);
+  }
+  applyWeaponStats('assault');
 }
 
 /* ---------- 射撃 ---------- */
@@ -121,7 +473,8 @@ const _up = new THREE.Vector3(0, 1, 0);
 const _muzzleW = new THREE.Vector3();
 
 function currentSpread() {
-  let s = weapon.ads ? 0.0045 : 0.017;
+  const def = activeDef();
+  let s = weapon.ads ? def.spreadAds : def.spreadHip;
   const spd = Math.hypot(player.vel.x, player.vel.z);
   s += (spd / 7) * 0.02;
   if (!player.onGround) s += 0.03;
@@ -131,28 +484,31 @@ function currentSpread() {
 
 function tryFire(now) {
   if (!player.alive || weapon.reloading) return;
+  if (player.nadeAim || player.healing) return;
   if (now - weapon.lastShot < weapon.fireInterval) return;
   if (player.sprinting) return;
+  const def = activeDef();
+  if (!def.auto && weapon.semiLocked) return;
   if (weapon.mag <= 0) {
     AudioSys.dry();
     startReload();
     weapon.lastShot = now;
+    if (!def.auto) weapon.semiLocked = true;
     return;
   }
   weapon.lastShot = now;
   weapon.mag--;
+  if (!def.auto) weapon.semiLocked = true;
   game.shots++;
-  game.shotFired = true;   // 敵が銃声を聞きつける
+  game.shotFired = true;
 
-  // リコイル＆拡散
-  const rec = weapon.ads ? 0.55 : 1;
-  player.recoilP += rand(0.0055, 0.0085) * rec;
-  player.recoilY += rand(-0.0035, 0.0035) * rec;
-  weapon.bloom = Math.min(weapon.bloom + 0.0038, 0.03);
-  weapon.kickZ += 0.045;
-  weapon.kickR += 0.075;
+  const rec = weapon.ads ? def.adsRecoil : 1;
+  player.recoilP += rand(def.recoilP[0], def.recoilP[1]) * rec;
+  player.recoilY += rand(-def.recoilY, def.recoilY) * rec;
+  weapon.bloom = Math.min(weapon.bloom + def.bloomAdd, def.bloomMax);
+  weapon.kickZ += def.kickZ;
+  weapon.kickR += def.kickR;
 
-  // 射線（スプレッド付き）
   camera.getWorldDirection(_dir);
   const sp = currentSpread();
   _dir.x += rand(-sp, sp); _dir.y += rand(-sp, sp); _dir.z += rand(-sp, sp);
@@ -176,18 +532,15 @@ function tryFire(now) {
     end = _from.clone().addScaledVector(_dir, 250);
   }
 
-  // トレーサー（銃口から）
   weapon.muzzle.getWorldPosition(_muzzleW);
   spawnTracer(_muzzleW, end, 0xffe9b8);
 
-  // マズルフラッシュ
   weapon.flash.material.opacity = 0.95;
   weapon.flash.material.rotation = rand(0, 6.28);
   weapon.flash.scale.setScalar(rand(0.16, 0.26));
   weapon.flashLight.position.copy(_muzzleW);
-  weapon.flashLight.intensity = 2.4;
+  weapon.flashLight.intensity = arsenal.activeId === 'sniper' ? 3.2 : 2.4;
 
-  // 薬莢
   _right.set(1, 0, 0).applyQuaternion(camera.quaternion);
   ejectShell(_muzzleW, _right, _up);
 
@@ -207,11 +560,11 @@ function startReload() {
 /* ---------- プレイヤー被弾 ---------- */
 function damagePlayer(dmg, fromPos) {
   if (!player.alive) return;
+  if (player.healing) cancelHeal();
   player.hp -= dmg;
   player.lastDamage = game.time;
   AudioSys.hurt();
 
-  // 方向インジケータ
   const d = new THREE.Vector3().subVectors(fromPos, player.pos); d.y = 0; d.normalize();
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
@@ -225,7 +578,8 @@ function damagePlayer(dmg, fromPos) {
   if (player.hp <= 0) {
     player.hp = 0;
     player.alive = false;
-    gameOver();
+    if (game.mode === 'tdm') onPlayerKilled(fromPos);
+    else gameOver();
   }
   updateHealthHUD();
 }
@@ -258,21 +612,33 @@ function resolveCollision(p, radius, height) {
 function updatePlayer(dt) {
   if (!player.alive) return;
 
+  if (weapon.switchLock > 0) weapon.switchLock = Math.max(0, weapon.switchLock - dt);
+  if (player.grenadeCd > 0) player.grenadeCd = Math.max(0, player.grenadeCd - dt);
+
   const k = input.keys;
   let mx = (k.KeyD ? 1 : 0) - (k.KeyA ? 1 : 0);
   let mz = (k.KeyS ? 1 : 0) - (k.KeyW ? 1 : 0);
 
   player.crouching = !!k.KeyC;
-  const wantSprint = !!k.ShiftLeft && mz < 0 && !weapon.ads && !weapon.reloading;
-  player.sprinting = wantSprint && !player.crouching;
+  const shiftHeld = !!(k.ShiftLeft || k.ShiftRight);
+  // しゃがみ中の Shift はスプリントではなくスコープ（C+Shift）
+  player.sprinting = !player.healing && !player.nadeAim &&
+    shiftHeld && mz < 0 && !player.crouching && !weapon.reloading && !input.rmb;
+  const wantAds = !player.nadeAim && !player.healing &&
+    (input.rmb || (player.crouching && shiftHeld)) && !weapon.reloading && !player.sprinting;
+  weapon.ads = wantAds;
 
   player.targetEyeH = player.crouching ? 1.06 : 1.62;
   player.eyeH = lerp(player.eyeH, player.targetEyeH, 1 - Math.exp(-12 * dt));
 
   let speed = player.crouching ? 2.4 : (player.sprinting ? 7.2 : 4.6);
-  if (weapon.ads) speed *= 0.55;
+  if (weapon.ads) speed *= arsenal.activeId === 'sniper' ? 0.4 : 0.55;
+  // グレ構え中は武器持ちと同速（ADS だけ減速）
+  if (player.healing) speed *= 0.35;
 
-  // カメラ基準の移動（YXZ・前方 -Z に合わせる）
+  updateHeal(dt);
+  if (player.nadeAim) updateNadeArc();
+
   const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
   const wx = (mx * cos + mz * sin);
   const wz = (-mx * sin + mz * cos);
@@ -281,7 +647,6 @@ function updatePlayer(dt) {
   player.vel.x = lerp(player.vel.x, wx / wl * speed * (mx || mz ? 1 : 0), 1 - Math.exp(-accel * dt));
   player.vel.z = lerp(player.vel.z, wz / wl * speed * (mx || mz ? 1 : 0), 1 - Math.exp(-accel * dt));
 
-  // 重力・ジャンプ
   player.vel.y -= 13.5 * dt;
   if (k.Space && player.onGround) {
     player.vel.y = 4.6;
@@ -297,10 +662,8 @@ function updatePlayer(dt) {
 
   resolveCollision(player.pos, player.radius, player.targetEyeH + 0.2);
 
-  // リーン（移動時の僅かなロール）
   player.lean = lerp(player.lean, -mx * 0.014, 1 - Math.exp(-8 * dt));
 
-  // 歩行ボブ＆足音
   const spd = Math.hypot(player.vel.x, player.vel.z);
   if (spd > 0.5 && player.onGround) {
     const prev = Math.sin(player.bobPhase);
@@ -309,13 +672,12 @@ function updatePlayer(dt) {
     if (prev >= 0 && cur < 0) AudioSys.step(player.sprinting);
   }
 
-  // HP 自動回復
-  if (player.hp < 100 && game.time - player.lastDamage > player.regenDelay) {
+  // TDM は自動回復なし（キット運用を強制）
+  if (game.mode !== 'tdm' && player.hp < 100 && game.time - player.lastDamage > player.regenDelay) {
     player.hp = Math.min(100, player.hp + 11 * dt);
     updateHealthHUD();
   }
 
-  // カメラ
   const bobY = Math.sin(player.bobPhase * 2) * 0.028 * clamp(spd / 5, 0, 1);
   const bobX = Math.cos(player.bobPhase) * 0.016 * clamp(spd / 5, 0, 1);
   camera.position.set(
@@ -324,7 +686,6 @@ function updatePlayer(dt) {
     player.pos.z - bobX * sin
   );
 
-  // リコイル回復
   player.recoilP = lerp(player.recoilP, 0, 1 - Math.exp(-7 * dt));
   player.recoilY = lerp(player.recoilY, 0, 1 - Math.exp(-7 * dt));
 
@@ -334,54 +695,46 @@ function updatePlayer(dt) {
     player.lean
   );
 
-  // 射撃
-  if (input.lmb) tryFire(game.time);
+  if (input.lmb && !player.nadeAim) tryFire(game.time);
 }
 
 /* ---------- 武器（見た目）更新 ---------- */
 function updateWeapon(dt) {
   const g = weapon.gun;
   if (!g) return;
+  const def = activeDef();
 
-  // ADS 遷移
   weapon.adsT = clamp(weapon.adsT + (weapon.ads ? dt : -dt) * 7, 0, 1);
   const t = weapon.adsT * weapon.adsT * (3 - 2 * weapon.adsT);
 
-  // FOV
-  const targetFov = player.sprinting ? 80 : lerp(75, 46, t);
+  const targetFov = player.sprinting ? 80 : lerp(75, def.adsFov, t);
   if (Math.abs(camera.fov - targetFov) > 0.1) {
     camera.fov = lerp(camera.fov, targetFov, 1 - Math.exp(-14 * dt));
     camera.updateProjectionMatrix();
   }
 
-  // 銃の基本位置
-  const hip = { x: 0.21, y: -0.19, z: -0.4, rx: 0, ry: 0.08 };
-  const ads = { x: 0, y: -0.09, z: -0.47, rx: 0, ry: 0 };
+  const hip = def.hip, ads = def.ads;
   let px = lerp(hip.x, ads.x, t), py = lerp(hip.y, ads.y, t), pz = lerp(hip.z, ads.z, t);
   let rx = lerp(hip.rx, ads.rx, t), ry = lerp(hip.ry, ads.ry, t);
 
-  // スプリント姿勢
   if (player.sprinting) {
     py -= 0.07; rx -= 0.5; ry += 0.35;
   }
-  // リロード姿勢
   if (weapon.reloading) {
     const rp = Math.sin((weapon.reloadT / weapon.reloadDur) * Math.PI);
     py -= 0.13 * rp; rx -= 0.75 * rp; ry -= 0.25 * rp;
   }
 
-  // ボブ＆呼吸＆マウススウェイ
   const spd = Math.hypot(player.vel.x, player.vel.z);
   const bobA = clamp(spd / 5, 0, 1) * (1 - t * 0.85);
   px += Math.cos(player.bobPhase) * 0.008 * bobA;
   py += Math.sin(player.bobPhase * 2) * 0.006 * bobA;
-  py += Math.sin(game.time * 1.6) * 0.0016 * (t > 0.5 ? 1 : 0.3); // 呼吸
+  py += Math.sin(game.time * 1.6) * 0.0016 * (t > 0.5 ? 1 : 0.3);
   weapon.swayX = lerp(weapon.swayX, 0, 1 - Math.exp(-8 * dt));
   weapon.swayY = lerp(weapon.swayY, 0, 1 - Math.exp(-8 * dt));
   px += weapon.swayX * (1 - t * 0.8);
   py += weapon.swayY * (1 - t * 0.8);
 
-  // リコイルキック
   weapon.kickZ = lerp(weapon.kickZ, 0, 1 - Math.exp(-11 * dt));
   weapon.kickR = lerp(weapon.kickR, 0, 1 - Math.exp(-11 * dt));
   pz += weapon.kickZ;
@@ -390,14 +743,11 @@ function updateWeapon(dt) {
   g.position.set(px, py, pz);
   g.rotation.set(rx, ry, 0);
 
-  // フラッシュ減衰
   weapon.flash.material.opacity *= Math.exp(-28 * dt);
   weapon.flashLight.intensity *= Math.exp(-30 * dt);
 
-  // ブルーム（拡散）回復
-  weapon.bloom = Math.max(0, weapon.bloom - 0.028 * dt);
+  weapon.bloom = Math.max(0, weapon.bloom - def.bloomDecay * dt);
 
-  // リロード進行
   if (weapon.reloading) {
     weapon.reloadT += dt;
     document.getElementById('reloadfill').style.width = `${(weapon.reloadT / weapon.reloadDur) * 100}%`;
@@ -408,15 +758,34 @@ function updateWeapon(dt) {
       weapon.reserve -= take;
       weapon.reloading = false;
       document.getElementById('reloadwrap').style.display = 'none';
+      saveActiveAmmo();
       updateAmmoHUD();
     }
   }
 
-  // クロスヘアの開き
   const gapPx = 8 + currentSpread() * 780;
   document.documentElement.style.setProperty('--gap', `${gapPx.toFixed(1)}px`);
   const chEl = document.getElementById('crosshair');
-  chEl.style.opacity = (weapon.ads || player.sprinting) ? 0 : 1;
+  const scopeEl = document.getElementById('scopeoverlay');
+  const sniperAds = arsenal.activeId === 'sniper' && t > 0.05 && !player.nadeAim;
+  if (player.nadeAim) {
+    g.visible = false;
+    if (scopeEl) scopeEl.style.opacity = '0';
+    chEl.style.opacity = 1;
+  } else if (arsenal.activeId === 'sniper') {
+    // 覗き込みが進んだら不透明な3D銃身を隠し、視界を2Dスコープに渡す
+    g.traverse(o => {
+      if (o.userData && o.userData.hideOnAds) o.visible = t < 0.35;
+    });
+    g.visible = t < 0.72;
+    if (scopeEl) scopeEl.style.opacity = String(clamp((t - 0.25) / 0.55, 0, 1));
+    chEl.style.opacity = 0;
+  } else {
+    g.visible = true;
+    if (scopeEl) scopeEl.style.opacity = '0';
+    chEl.style.opacity = (weapon.ads || player.sprinting) ? 0 : 1;
+  }
+  if (!sniperAds && scopeEl && arsenal.activeId !== 'sniper' && !player.nadeAim) scopeEl.style.opacity = '0';
 }
 
 /* ---------- 入力 ---------- */
@@ -424,22 +793,34 @@ function initInput() {
   document.addEventListener('keydown', e => {
     input.keys[e.code] = true;
     if (e.code === 'KeyR') startReload();
+    if (e.code === 'KeyQ') { if (!player.nadeAim) cycleWeapon(1); }
+    if (e.code === 'KeyE') { if (!player.nadeAim) cycleWeapon(-1); }
+    if (e.code === 'KeyG') toggleNadeAim();
+    if (e.code === 'KeyF') startHeal();
     if (e.code === 'Space') e.preventDefault();
   });
   document.addEventListener('keyup', e => { input.keys[e.code] = false; });
   document.addEventListener('mousedown', e => {
     if (game.state !== 'playing') return;
-    if (e.button === 0) input.lmb = true;
-    if (e.button === 2 && !player.sprinting && !weapon.reloading) weapon.ads = true;
+    if (e.button === 0) {
+      if (player.nadeAim) {
+        throwGrenade();
+        return;
+      }
+      if (player.healing) cancelHeal();
+      input.lmb = true;
+    }
+    if (e.button === 2) input.rmb = true;
   });
   document.addEventListener('mouseup', e => {
-    if (e.button === 0) input.lmb = false;
-    if (e.button === 2) { input.rmb = false; weapon.ads = false; }
+    if (e.button === 0) { input.lmb = false; weapon.semiLocked = false; }
+    if (e.button === 2) input.rmb = false;
   });
   document.addEventListener('contextmenu', e => e.preventDefault());
   document.addEventListener('mousemove', e => {
     if (game.state !== 'playing' || document.pointerLockElement === null) return;
-    const sens = 0.0021 * (weapon.ads ? 0.62 : 1);
+    const def = activeDef();
+    const sens = 0.0021 * (weapon.ads ? def.adsSens : 1);
     player.yaw -= e.movementX * sens;
     player.pitch = clamp(player.pitch - e.movementY * sens, -1.45, 1.45);
     weapon.swayX = clamp(weapon.swayX - e.movementX * 0.00008, -0.03, 0.03);

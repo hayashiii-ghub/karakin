@@ -153,6 +153,21 @@ const AudioSys = {
     this._tone('sine', 48, 30, 1.1, 0.12);
   },
 
+  nadeThrow() {
+    if (!this.ok) return;
+    this._clickAt(0, 900);
+    this._noise(0.08, 'highpass', 1800, 0.08, 1.2);
+  },
+
+  /* 近くの手榴弾爆発 */
+  grenade() {
+    if (!this.ok) return;
+    const f = this._noise(0.9, 'lowpass', 420, 0.85, 0.45);
+    f.frequency.exponentialRampToValueAtTime(55, this.t + 0.7);
+    this._tone('sine', 70, 28, 0.55, 0.45);
+    this._noise(0.35, 'highpass', 900, 0.25, 0.8);
+  },
+
   /* 環境風ノイズ（ループ） */
   _wind() {
     const src = this.ctx.createBufferSource();

@@ -29,6 +29,37 @@
   .ch.r { left: 50%; top: 50%; width: 9px; height: 2px; transform: translate(0, -50%)     translateX(var(--gap)); }
   .ch.dot { left: 50%; top: 50%; width: 2px; height: 2px; transform: translate(-50%, -50%); }
 
+  /* スナイパースコープ（ADS時。3Dスコープの黒塗り回避） */
+  #scopeoverlay {
+    position: fixed; inset: 0; opacity: 0; z-index: 8;
+    transition: opacity .05s linear;
+  }
+  #scopeoverlay .shade {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle 23vmin at center, transparent 0%, transparent 99%, #000 100%);
+  }
+  #scopeoverlay .glass {
+    position: absolute; left: 50%; top: 50%; width: 46vmin; height: 46vmin;
+    margin: -23vmin 0 0 -23vmin; border-radius: 50%;
+    background: radial-gradient(circle at center, rgba(55, 85, 65, .14) 0%, rgba(20, 40, 30, .06) 70%, transparent 100%);
+    box-shadow: inset 0 0 28px rgba(0, 0, 0, .45);
+  }
+  #scopeoverlay .sx,
+  #scopeoverlay .sy {
+    position: absolute; left: 50%; top: 50%; background: rgba(20, 35, 28, .85);
+  }
+  #scopeoverlay .sx { width: 44vmin; height: 1px; transform: translate(-50%, -50%); }
+  #scopeoverlay .sy { width: 1px; height: 44vmin; transform: translate(-50%, -50%); }
+  #scopeoverlay .sd {
+    position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
+    margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(180, 40, 30, .9);
+  }
+  #scopeoverlay .ring {
+    position: absolute; left: 50%; top: 50%; width: 46vmin; height: 46vmin;
+    margin: -23vmin 0 0 -23vmin; border-radius: 50%;
+    border: 2px solid rgba(180, 190, 170, .4);
+  }
+
   /* ヒットマーカー */
   #hitmarker { position: fixed; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
   #hitmarker .hm { position: absolute; width: 14px; height: 2px; background: #fff; box-shadow: 0 0 3px rgba(0,0,0,.9); }
@@ -73,12 +104,25 @@
   #ammo { font-size: 38px; font-weight: 700; text-shadow: 0 1px 3px #000; line-height: 1.05; }
   #ammo .reserve { font-size: 17px; color: #b9b09a; font-weight: 400; }
   #ammo.empty { color: #ff5a44; }
+  #invbox {
+    position: fixed; right: 30px; bottom: 78px; text-align: right;
+    font-size: 13px; letter-spacing: .12em; color: #cfc7ad; text-shadow: 0 1px 2px #000;
+    line-height: 1.7;
+  }
+  #invbox b { font-size: 20px; color: #efe6c4; font-family: "Menlo", monospace; margin-left: 6px; }
+  #invbox b.empty { color: #ff5a44; }
+  #nadebox.aiming { color: #efe6c4; }
+  #nadebox.aiming b { color: #ffd27a; }
 
   /* リロードバー */
   #reloadwrap { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); text-align: center; display: none; }
   #reloadtext { font-size: 11px; letter-spacing: .35em; color: #e8dfb8; text-shadow: 0 1px 2px #000; margin-bottom: 5px; }
   #reloadbar { width: 130px; height: 3px; background: rgba(255,255,255,.15); }
   #reloadfill { height: 100%; width: 0%; background: #e8dfb8; }
+  #healwrap { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); text-align: center; display: none; }
+  #healtext { font-size: 11px; letter-spacing: .35em; color: #b8e8c4; text-shadow: 0 1px 2px #000; margin-bottom: 5px; }
+  #healbar { width: 130px; height: 3px; background: rgba(255,255,255,.15); }
+  #healfill { height: 100%; width: 0%; background: #7dcea0; }
 
   /* 上部情報 */
   #waveinfo {
@@ -88,6 +132,53 @@
   #scorebox { position: fixed; top: 18px; right: 28px; text-align: right; }
   #score { font-size: 24px; font-weight: 700; text-shadow: 0 1px 3px #000; }
   #scorebox small { font-size: 10px; letter-spacing: .3em; color: #b9b09a; }
+
+  #tdmhud {
+    display: none; position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    text-align: center; text-shadow: 0 1px 3px #000;
+  }
+  #tdmtimer {
+    font-size: 22px; font-weight: 700; letter-spacing: .18em; color: #efe6c4;
+    font-family: "Menlo", monospace;
+  }
+  #tdmscore { margin-top: 4px; font-size: 28px; font-weight: 800; letter-spacing: .08em; }
+  #tdmscore .blue { color: #6eb0e0; }
+  #tdmscore .red { color: #e07060; }
+
+  #respawnwrap {
+    display: none; position: fixed; left: 50%; top: 62%; transform: translateX(-50%);
+    text-align: center; pointer-events: none;
+  }
+  #respawntext { font-size: 13px; letter-spacing: .35em; color: #e8dfb8; margin-bottom: 6px; }
+  #respawnbar { width: 160px; height: 3px; background: rgba(255,255,255,.15); margin: 0 auto; }
+  #respawnfill { height: 100%; width: 0%; background: #d8c08a; }
+
+  .menu-stack {
+    width: min(720px, calc(100vw - 48px));
+    margin-top: 30px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .menu-stack .panel { margin-top: 0; width: 100%; box-sizing: border-box; }
+  .mode-card {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    width: 100%; text-align: left;
+  }
+  .mode-card .mc {
+    display: block; width: 100%; box-sizing: border-box;
+    padding: 16px 18px; border: 1px solid rgba(216,192,138,.28);
+    background: rgba(20,21,16,.55); font-size: 12px; line-height: 1.75; color: #cfc7ad;
+    font-family: inherit; text-align: left; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .mode-card .mc:hover {
+    background: rgba(216,192,138,.16);
+    border-color: #d8c08a;
+    color: #efe6c4;
+  }
+  .mode-card .mc:focus { outline: none; border-color: #d8c08a; }
+  .mode-card .mc h3 {
+    font-size: 13px; letter-spacing: .25em; color: #efe6c4; margin-bottom: 6px; font-weight: 700;
+  }
 
   /* キルフィード */
   #killfeed { position: fixed; top: 78px; right: 28px; text-align: right; font-size: 12px; }
@@ -141,8 +232,10 @@
   .btn:hover { background: #d8c08a; color: #14150f; }
   .note { margin-top: 20px; font-size: 11px; color: #8b846d; letter-spacing: .15em; }
 
-  #pause, #death { display: none; }
+  #pause, #death, #result { display: none; }
   #death h1 { color: #ff5a44; }
+  #result h1.win { color: #cfc48a; }
+  #result h1.lose { color: #ff5a44; }
   .stats { margin-top: 26px; display: grid; grid-template-columns: auto auto; gap: 8px 34px; font-size: 14px; color: #cfc7ad; }
   .stats b { color: #efe6c4; font-family: "Menlo", monospace; text-align: right; }
 
@@ -161,6 +254,13 @@
     <div class="ch l"></div><div class="ch r"></div>
     <div class="ch dot"></div>
   </div>
+  <div id="scopeoverlay">
+    <div class="shade"></div>
+    <div class="glass"></div>
+    <div class="ring"></div>
+    <div class="sx"></div><div class="sy"></div>
+    <div class="sd"></div>
+  </div>
   <div id="hitmarker">
     <div class="hm hm1"></div><div class="hm hm2"></div>
     <div class="hm hm3"></div><div class="hm hm4"></div>
@@ -174,6 +274,10 @@
     <div id="healthbar"><div id="healthfill"></div></div>
   </div>
 
+  <div id="invbox">
+    <div id="nadebox">GRENADE <b id="nadecount">1</b></div>
+    <div id="medbox">MEDKIT <b id="medcount">0</b></div>
+  </div>
   <div id="ammobox">
     <div id="firemode">AUTO</div>
     <div id="ammo">30<span class="reserve"> / 120</span></div>
@@ -183,26 +287,48 @@
     <div id="reloadtext">RELOADING</div>
     <div id="reloadbar"><div id="reloadfill"></div></div>
   </div>
+  <div id="healwrap">
+    <div id="healtext">HEALING</div>
+    <div id="healbar"><div id="healfill"></div></div>
+  </div>
 
   <div id="waveinfo" class="mono"></div>
+  <div id="tdmhud">
+    <div id="tdmtimer" class="mono">5:00</div>
+    <div id="tdmscore"><span class="blue">0</span> — <span class="red">0</span></div>
+  </div>
   <div id="scorebox"><small>SCORE</small><div id="score" class="mono">0</div></div>
   <div id="killfeed"></div>
   <div id="banner" class="title-font"></div>
+  <div id="respawnwrap">
+    <div id="respawntext">RESPAWN</div>
+    <div id="respawnbar"><div id="respawnfill"></div></div>
+  </div>
 </div>
 
 <div id="menu" class="overlay">
   <h1 class="title-font">OPERATION <span class="accent">SANDSTORM</span></h1>
-  <div class="tagline">砂 嵐 作 戦 ― FRONTLINE SURVIVAL</div>
-  <div class="panel">
-    <b>W A S D</b> 移動　　<b>SHIFT</b> ダッシュ　　<b>C</b> しゃがみ　　<b>SPACE</b> ジャンプ<br>
-    <b>左クリック</b> 射撃　　<b>右クリック</b> 照準（ADS）　　<b>R</b> リロード<br>
-    <b>ESC</b> ポーズ
+  <div class="tagline">砂 嵐 作 戦 ― SELECT OPERATION</div>
+  <div class="menu-stack">
+    <div class="panel">
+      <b>W A S D</b> 移動　　<b>SHIFT</b> ダッシュ　　<b>C</b> しゃがみ　　<b>SPACE</b> ジャンプ<br>
+      <b>左クリック</b> 射撃　　<b>右クリック</b> 照準（ADS）　　<b>C + SHIFT</b> スコープ（しゃがみ照準）<br>
+      <b>R</b> リロード　　<b>G</b> グレネード構え / 解除　　<b>F</b> 応急キット使用<br>
+      <b>Q / E</b> 武器切替　　<b>ESC</b> ポーズ
+    </div>
+    <div class="mode-card">
+      <button type="button" class="mc" id="startSurvivalBtn">
+        <h3>SURVIVAL</h3>
+        ウェーブ防衛。WAVE 10 クリアで勝利。<br>
+        狙撃銃は敵狙撃兵撃破で入手。自動回復あり。
+      </button>
+      <button type="button" class="mc" id="startTdmBtn">
+        <h3>TEAM DEATHMATCH</h3>
+        3v3・5分・キル数勝負。装備固定。<br>
+        グレ2・キット2。撃破ドロップあり。自動回復なし。
+      </button>
+    </div>
   </div>
-  <div style="margin-top:18px; font-size:13px; color:#a39a7e; line-height:1.9;">
-    迫撃砲支援が来るまで、この拠点を死守せよ。<br>
-    敵は波状攻撃を仕掛けてくる。ヘッドショットで効率よく排除しろ。
-  </div>
-  <button class="btn" id="startBtn">作戦開始</button>
   <div class="note">※ 音が出ます　※ マウスポインタがロックされます</div>
 </div>
 
@@ -210,6 +336,7 @@
   <h1 class="title-font">PAUSED</h1>
   <div class="tagline">一 時 停 止</div>
   <button class="btn" id="resumeBtn">再 開</button>
+  <button class="btn" id="restartBtn">ロビーへ</button>
 </div>
 
 <div id="death" class="overlay">
@@ -223,6 +350,15 @@
     <span>スコア</span><b id="stScore">0</b>
   </div>
   <button class="btn" id="retryBtn">再出撃</button>
+  <button class="btn" id="lobbyBtn">ロビーへ</button>
+</div>
+
+<div id="result" class="overlay">
+  <h1 class="title-font" id="resultTitle">VICTORY</h1>
+  <div class="tagline" id="resultSub">勝 利</div>
+  <div class="stats" id="resultStats"></div>
+  <button class="btn" id="resultRetryBtn">もう一度</button>
+  <button class="btn" id="resultLobbyBtn">ロビーへ</button>
 </div>
 
 <div id="err"></div>
